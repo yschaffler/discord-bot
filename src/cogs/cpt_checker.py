@@ -8,6 +8,9 @@ from src.config import TRAINING_API_URL, CPT_CHANNEL_ID, TRAINING_API_TOKEN, FIR
 
 logger = logging.getLogger("CPTChecker")
 
+# Constants
+MAX_ERROR_RESPONSE_LENGTH = 500  # Maximum characters to log from error responses
+
 class CPTChecker(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -35,7 +38,7 @@ class CPTChecker(commands.Cog):
                     if response.status != 200:
                         logger.error(f"Failed to fetch CPTs: HTTP {response.status}")
                         response_text = await response.text()
-                        logger.error(f"Response body: {response_text[:500]}")
+                        logger.error(f"Response body: {response_text[:MAX_ERROR_RESPONSE_LENGTH]}")
                         return []
                     data = await response.json()
                     logger.info(f"Raw API response: {data}")

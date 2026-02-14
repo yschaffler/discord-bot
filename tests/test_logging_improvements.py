@@ -90,13 +90,5 @@ class TestLoggingImprovements(unittest.TestCase):
         self.assertIn('logger.info(f"Raw API response:', source)
 
 if __name__ == '__main__':
-    # Run async tests
-    suite = unittest.TestLoader().loadTestsFromTestCase(TestLoggingImprovements)
-    
-    # Run synchronous tests
-    for test in suite:
-        if asyncio.iscoroutinefunction(test._testMethodName):
-            # Convert async test to sync
-            asyncio.run(test.debug())
-        else:
-            unittest.TextTestRunner(verbosity=2).run(test)
+    # Run tests with proper async handling
+    unittest.main(verbosity=2)

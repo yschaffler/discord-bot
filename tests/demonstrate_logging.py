@@ -81,17 +81,17 @@ def demonstrate_logging():
     # CPT outside FIR
     logger.info(f"CPT 124 position 'EDDF_APP' not in FIR (allowed prefixes: {fir_prefixes}), skipping")
     
-    logger.info(f"Processed 1 CPTs in FIR (filtered out 1), sent 1 notifications")
+    logger.info(f"Processed 1 CPT in FIR (filtered out 1), sent 1 notification")
     print()
     
     print("4. /testcpt COMMAND LOGGING:")
     print("-" * 80)
     logger.info(f"Manual CPT check triggered by user TestUser#1234")
-    logger.info(f"Found 1 CPTs in FIR out of 2 total CPTs")
+    logger.info(f"Found 1 CPT in FIR out of 2 total CPTs")
     
     # This is what the user will see in Discord
     print("\n>>> Discord Response:")
-    print("Fertig. 1 neue Benachrichtigungen gesendet.")
+    print("Fertig. 1 neue Benachrichtigung gesendet.")
     print("CPTs in FIR gefunden: 1/2")
     print("\nBeispiel CPTs:")
     print("- EDDM_TWR am 2026-02-17T18:00:00Z: Max Mustermann")
