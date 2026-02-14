@@ -308,10 +308,14 @@ class CPTChecker(commands.Cog):
             return False
 
         try:
+            is_confirmed = cpt.get("confirmed", False)
+
+            color = discord.Color.green() if is_confirmed else discord.Color.orange()
+
             embed = discord.Embed(
                 title=f"{title_prefix}: {cpt.get('course_name')}",
                 description=f"Ein neues CPT steht an!",
-                color=discord.Color.blue(),
+                color=color,
                 timestamp=datetime.fromisoformat(cpt.get('date')).replace(tzinfo=None)
             )
             embed.add_field(name="Trainee", value=f"{cpt.get('trainee_name')} ({cpt.get('trainee_vatsim_id')})", inline=True)
