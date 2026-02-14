@@ -86,8 +86,9 @@ class CPTChecker(commands.Cog):
             time_diff = cpt_date - now
             hours_left = time_diff.total_seconds() / 3600
             
-            # Calculate days difference ignoring time of day for 3-day notification
-            # This ensures that if CPT is on 20th at 7 PM, we send notification on 17th morning
+            # Calculate days difference ignoring time of day
+            # This ensures notifications are sent based on calendar days, not exact hours
+            # Example: If CPT is on 20th at 7 PM, notification is sent on 17th morning (3 days)
             cpt_date_day = cpt_date.date()
             now_day = now.date()
             days_diff = (cpt_date_day - now_day).days
@@ -108,8 +109,9 @@ class CPTChecker(commands.Cog):
                 logger.debug(f"CPT {cpt_id}: Triggering 'today' notification (hours_left={hours_left:.1f})")
             
             # "Upcoming" Notification (more than 12 hours before)
-            # For 3-day notification, we check based on days_diff (ignoring time)
-            # This means: if days_diff >= 1, we send the notification
+            # Note: Using '3day' as the notification type for all upcoming notifications
+            # This allows the system to track that an advance notification was sent,
+            # preventing duplicate notifications regardless of the actual days remaining
             elif hours_left > 12:
                 notification_type = "3day"
                 # Use days_diff for the title calculation
@@ -243,7 +245,7 @@ class CPTChecker(commands.Cog):
                 logger.info(msg)
                 await ctx.send(msg)
             else:
-                msg = "Fertig. Keine neues CPTs gefunden."
+                msg = "Fertig. Keine neuen CPTs gefunden."
                 logger.info(msg)
                 await ctx.send(msg)
 
