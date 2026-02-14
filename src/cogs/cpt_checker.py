@@ -53,12 +53,16 @@ class CPTChecker(commands.Cog):
 
     @tasks.loop(hours=3)
     async def cpt_check_loop(self):
-        logger.info("Checking for CPTs...")
+        logger.info("=" * 80)
+        logger.info("Starting scheduled CPT check (runs every 3 hours)")
+        logger.info("=" * 80)
         # self.load_announced_cpts() # Removed to prevent overwriting in-memory state
         self.cleanup_old_cpts()
         cpts = await self.fetch_cpts()
         await self.process_cpts(cpts)
         self.save_announced_cpts()
+        logger.info("CPT check complete")
+        logger.info("=" * 80)
 
     async def process_cpts(self, cpts):
         now = datetime.now(timezone.utc)
@@ -328,9 +332,13 @@ class CPTChecker(commands.Cog):
 
     @cpt_check_loop.before_loop
     async def before_cpt_check(self):
+        logger.info("Waiting for bot to be ready before starting CPT check loop...")
         await self.bot.wait_until_ready()
+        logger.info("Bot is ready. Initializing CPT checker...")
         # Load once here to ensure in-memory state is primed before loop starts
         self.load_announced_cpts()
+        logger.info(f"CPT check loop will run every 3 hours")
+        logger.info(f"Monitoring FIR prefixes: {', '.join(self.fir_prefixes)}")
 
 async def setup(bot):
     await bot.add_cog(CPTChecker(bot))
