@@ -25,7 +25,7 @@ class TestIssue161(unittest.TestCase):
             self.checker.save_announced_cpts = MagicMock()
         
         if hasattr(self.checker.cpt_check_loop, 'cancel'):
-             self.checker.cpt_check_loop.cancel()
+            self.checker.cpt_check_loop.cancel()
 
     async def test_cpt_161_notification(self):
         """Test that CPT #161 would be notified on Feb 14 17:00"""
