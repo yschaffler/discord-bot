@@ -37,15 +37,29 @@ class TestCPTNotifications(unittest.TestCase):
             "position": "EDDM_TWR"
         }
 
-        # Test Case 3: CPT in 13 hours -> Should trigger "3day" type (Upcoming)
+        # Test Case 3: CPT in 13 hours -> Should NOT trigger notification (outside notification windows)
         cpt_13hours = {
             "id": "3",
             "date": (now + timedelta(hours=13)).isoformat(),
             "position": "EDDM_TWR"
         }
 
+        # Test Case 4: CPT in 3 days -> Should trigger "3day" type (Upcoming)
+        cpt_3days = {
+            "id": "4",
+            "date": (now + timedelta(days=3)).isoformat(),
+            "position": "EDDM_TWR"
+        }
+
+        # Test Case 5: CPT in 5 days -> Should NOT trigger notification (outside 2-4 day window)
+        cpt_5days = {
+            "id": "5",
+            "date": (now + timedelta(days=5)).isoformat(),
+            "position": "EDDM_TWR"
+        }
+
         # Process
-        await self.checker.process_cpts([cpt_2days, cpt_4hours, cpt_13hours])
+        await self.checker.process_cpts([cpt_2days, cpt_4hours, cpt_13hours, cpt_3days, cpt_5days])
         
         # Verify 2 days away
         key_2days = "1_3day"
@@ -55,9 +69,19 @@ class TestCPTNotifications(unittest.TestCase):
         key_4hours = "2_today"
         self.assertIn(key_4hours, self.checker.cpts_announced, "CPT 4 hours away should be announced as 'today' type")
 
-        # Verify 13 hours away (Upcoming)
+        # Verify 13 hours away (should NOT be announced)
         key_13hours = "3_3day"
-        self.assertIn(key_13hours, self.checker.cpts_announced, "CPT 13 hours away should be announced as '3day' type")
+        self.assertNotIn(key_13hours, self.checker.cpts_announced, "CPT 13 hours away should NOT be announced (outside notification windows)")
+        key_13hours_today = "3_today"
+        self.assertNotIn(key_13hours_today, self.checker.cpts_announced, "CPT 13 hours away should NOT be announced as 'today' (>12 hours)")
+
+        # Verify 3 days away
+        key_3days = "4_3day"
+        self.assertIn(key_3days, self.checker.cpts_announced, "CPT 3 days away should be announced as '3day' type")
+
+        # Verify 5 days away (should NOT be announced)
+        key_5days = "5_3day"
+        self.assertNotIn(key_5days, self.checker.cpts_announced, "CPT 5 days away should NOT be announced (outside 2-4 day window)")
 
         print("Notification logic verified.")
 

@@ -108,11 +108,10 @@ class CPTChecker(commands.Cog):
                 title = "CPT Heute!"
                 logger.debug(f"CPT {cpt_id}: Triggering 'today' notification (hours_left={hours_left:.1f})")
             
-            # "Upcoming" Notification (more than 12 hours before)
-            # Note: Using '3day' as the notification type for all upcoming notifications
-            # This allows the system to track that an advance notification was sent,
-            # preventing duplicate notifications regardless of the actual days remaining
-            elif hours_left > 12:
+            # "Upcoming" Notification (only when 2-4 days before)
+            # Send advance notification only within the 2-4 day window to ensure
+            # users receive timely notifications without being spammed too early
+            elif days_diff >= 2 and days_diff <= 4:
                 notification_type = "3day"
                 # Use days_diff for the title calculation
                 if days_diff == 1:
