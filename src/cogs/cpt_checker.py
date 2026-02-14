@@ -25,16 +25,24 @@ class CPTChecker(commands.Cog):
             headers = {}
             if TRAINING_API_TOKEN:
                 headers["Authorization"] = f"Bearer {TRAINING_API_TOKEN}"
+                logger.info(f"Using Bearer token authentication (token length: {len(TRAINING_API_TOKEN)})")
+            else:
+                logger.warning("No TRAINING_API_TOKEN configured - API may reject request")
             
-            logger.debug(f"Fetching CPTs from {TRAINING_API_URL}")
+            logger.info(f"Fetching CPTs from {TRAINING_API_URL}")
             async with aiohttp.ClientSession() as session:
                 async with session.get(TRAINING_API_URL, headers=headers) as response:
                     if response.status != 200:
                         logger.error(f"Failed to fetch CPTs: HTTP {response.status}")
+                        response_text = await response.text()
+                        logger.error(f"Response body: {response_text[:500]}")
                         return []
                     data = await response.json()
+                    logger.info(f"Raw API response: {data}")
                     cpts = data.get("data", [])
                     logger.info(f"Fetched {len(cpts)} CPTs from API")
+                    if cpts:
+                        logger.info(f"Sample CPT data: {cpts[0]}")
                     return cpts
         except Exception as e:
             logger.error(f"Error fetching CPTs: {e}", exc_info=True)
@@ -55,6 +63,7 @@ class CPTChecker(commands.Cog):
         
         processed_count = 0
         notified_count = 0
+        filtered_count = 0
         
         for cpt in cpts:
             position = cpt.get("position", "")
@@ -67,7 +76,8 @@ class CPTChecker(commands.Cog):
                     break
             
             if not is_in_fir:
-                logger.debug(f"CPT {cpt.get('id')} position {position} not in FIR, skipping")
+                filtered_count += 1
+                logger.info(f"CPT {cpt.get('id')} position '{position}' not in FIR (allowed prefixes: {self.fir_prefixes}), skipping")
                 continue
 
             processed_count += 1
@@ -95,7 +105,7 @@ class CPTChecker(commands.Cog):
 
             cpt_id = str(cpt.get("id"))
             
-            logger.debug(f"CPT {cpt_id} ({position}): date={cpt_date.isoformat()}, "
+            logger.info(f"CPT {cpt_id} ({position}): date={cpt_date.isoformat()}, "
                         f"hours_left={hours_left:.1f}, days_diff={days_diff}")
             
             # Notification Types
@@ -138,7 +148,7 @@ class CPTChecker(commands.Cog):
             else:
                 logger.debug(f"CPT {cpt_id}: No notification needed (hours_left={hours_left:.1f})")
         
-        logger.info(f"Processed {processed_count} CPTs in FIR, sent {notified_count} notifications")
+        logger.info(f"Processed {processed_count} CPTs in FIR (filtered out {filtered_count}), sent {notified_count} notifications")
 
     def load_announced_cpts(self):
         try:
@@ -233,18 +243,50 @@ class CPTChecker(commands.Cog):
         logger.info(f"Manual CPT check triggered by user {ctx.author}")
         try:
             cpts = await self.fetch_cpts()
+            
+            if not cpts:
+                msg = "Keine CPTs vom API erhalten. Prüfe die Logs für Details."
+                logger.warning(msg)
+                await ctx.send(msg)
+                return
 
+            # Filter CPTs by FIR
+            filtered_cpts = []
+            for cpt in cpts:
+                position = cpt.get("position", "")
+                is_in_fir = any(position.startswith(prefix) for prefix in self.fir_prefixes)
+                if is_in_fir:
+                    filtered_cpts.append(cpt)
+            
+            logger.info(f"Found {len(filtered_cpts)} CPTs in FIR out of {len(cpts)} total CPTs")
+            
+            # Create summary of CPTs
+            cpt_summary = []
+            for cpt in filtered_cpts[:5]:  # Show first 5
+                date_str = cpt.get('date', 'N/A')
+                position = cpt.get('position', 'N/A')
+                trainee = cpt.get('trainee_name', 'N/A')
+                cpt_summary.append(f"- {position} am {date_str}: {trainee}")
+            
             count_before = len(self.cpts_announced)
             await self.process_cpts(cpts)
             count_after = len(self.cpts_announced)
             
             if count_after > count_before:
                 self.save_announced_cpts()
-                msg = f"Fertig. {count_after - count_before} neue Benachrichtigungen gesendet."
+                msg = f"Fertig. {count_after - count_before} neue Benachrichtigungen gesendet.\n"
+                msg += f"CPTs in FIR gefunden: {len(filtered_cpts)}/{len(cpts)}"
+                if cpt_summary:
+                    msg += f"\n\nBeispiel CPTs:\n" + "\n".join(cpt_summary)
                 logger.info(msg)
                 await ctx.send(msg)
             else:
-                msg = "Fertig. Keine neuen CPTs gefunden."
+                msg = f"Fertig. Keine neuen CPTs gefunden.\n"
+                msg += f"CPTs in FIR: {len(filtered_cpts)}/{len(cpts)}"
+                if cpt_summary:
+                    msg += f"\n\nBeispiel CPTs:\n" + "\n".join(cpt_summary)
+                else:
+                    msg += f"\nKeine CPTs in der FIR ({', '.join(self.fir_prefixes)}) gefunden."
                 logger.info(msg)
                 await ctx.send(msg)
 
