@@ -6,10 +6,24 @@ from src.config import EVENT_MANAGER_API_TOKEN, EVENT_API_PORT
 
 logger = logging.getLogger("EventBridge")
 
+@web.middleware
+async def error_middleware(request, handler):
+    """Middleware to handle protocol errors and invalid requests gracefully."""
+    try:
+        response = await handler(request)
+        return response
+    except web.HTTPException as ex:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        # Log unexpected errors
+        logger.error(f"Unexpected error handling request from {request.remote}: {e}", exc_info=True)
+        return web.json_response({"error": "Bad Request"}, status=400)
+
 class EventBridge(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.app = web.Application()
+        self.app = web.Application(middlewares=[error_middleware])
         self.app.router.add_post('/api/notify', self.notify_handler)
         self.runner = None
         self.site = None
@@ -18,6 +32,7 @@ class EventBridge(commands.Cog):
         # Security check
         auth_header = request.headers.get("Authorization")
         if auth_header != f"Bearer {EVENT_MANAGER_API_TOKEN}":
+            logger.warning(f"Unauthorized request from {request.remote}")
             return web.json_response({"error": "Unauthorized"}, status=401)
 
         try:
@@ -27,11 +42,14 @@ class EventBridge(commands.Cog):
             embed_data = data.get("embed")
             role_id = data.get("role_id")
 
+            logger.info(f"Received notification request for channel {channel_id}")
+
             if not channel_id:
                 return web.json_response({"error": "channel_id is required"}, status=400)
 
             channel = self.bot.get_channel(int(channel_id))
             if not channel:
+                logger.error(f"Channel {channel_id} not found")
                 return web.json_response({"error": "Channel not found"}, status=404)
 
             # Prepend role ping if provided
@@ -43,14 +61,15 @@ class EventBridge(commands.Cog):
                 embed = discord.Embed.from_dict(embed_data)
 
             await channel.send(content=message, embed=embed)
+            logger.info(f"Notification sent to channel {channel_id}")
             return web.json_response({"status": "ok", "message": "Notification sent"})
 
         except Exception as e:
-            logger.error(f"Error handling notification: {e}")
+            logger.error(f"Error handling notification: {e}", exc_info=True)
             return web.json_response({"error": "Internal Server Error"}, status=500)
 
     async def start_server(self):
-        self.runner = web.AppRunner(self.app)
+        self.runner = web.AppRunner(self.app, access_log=logger)
         await self.runner.setup()
         self.site = web.TCPSite(self.runner, '0.0.0.0', EVENT_API_PORT)
         await self.site.start()

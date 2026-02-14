@@ -25,16 +25,19 @@ class CPTChecker(commands.Cog):
             headers = {}
             if TRAINING_API_TOKEN:
                 headers["Authorization"] = f"Bearer {TRAINING_API_TOKEN}"
-                
+            
+            logger.debug(f"Fetching CPTs from {TRAINING_API_URL}")
             async with aiohttp.ClientSession() as session:
                 async with session.get(TRAINING_API_URL, headers=headers) as response:
                     if response.status != 200:
-                        logger.error(f"Failed to fetch CPTs: {response.status}")
+                        logger.error(f"Failed to fetch CPTs: HTTP {response.status}")
                         return []
                     data = await response.json()
-                    return data.get("data", [])
+                    cpts = data.get("data", [])
+                    logger.info(f"Fetched {len(cpts)} CPTs from API")
+                    return cpts
         except Exception as e:
-            logger.error(f"Error fetching CPTs: {e}")
+            logger.error(f"Error fetching CPTs: {e}", exc_info=True)
             return []
 
     @tasks.loop(hours=3)
@@ -48,6 +51,10 @@ class CPTChecker(commands.Cog):
 
     async def process_cpts(self, cpts):
         now = datetime.now(timezone.utc)
+        logger.info(f"Processing {len(cpts)} CPTs (current time: {now.isoformat()})")
+        
+        processed_count = 0
+        notified_count = 0
         
         for cpt in cpts:
             position = cpt.get("position", "")
@@ -60,44 +67,57 @@ class CPTChecker(commands.Cog):
                     break
             
             if not is_in_fir:
+                logger.debug(f"CPT {cpt.get('id')} position {position} not in FIR, skipping")
                 continue
 
+            processed_count += 1
 
             cpt_date_str = cpt.get("date")
             if not cpt_date_str:
+                logger.warning(f"CPT {cpt.get('id')} has no date, skipping")
                 continue
 
             try:
                 cpt_date = datetime.fromisoformat(cpt_date_str)
             except ValueError:
-                logger.error(f"Invalid date format: {cpt_date_str}")
+                logger.error(f"CPT {cpt.get('id')} has invalid date format: {cpt_date_str}")
                 continue
             
             time_diff = cpt_date - now
-            days_diff = time_diff.days
+            hours_left = time_diff.total_seconds() / 3600
+            
+            # Calculate days difference ignoring time of day for 3-day notification
+            # This ensures that if CPT is on 20th at 7 PM, we send notification on 17th morning
+            cpt_date_day = cpt_date.date()
+            now_day = now.date()
+            days_diff = (cpt_date_day - now_day).days
 
             cpt_id = str(cpt.get("id"))
+            
+            logger.debug(f"CPT {cpt_id} ({position}): date={cpt_date.isoformat()}, "
+                        f"hours_left={hours_left:.1f}, days_diff={days_diff}")
             
             # Notification Types
             notification_type = None
             title = ""
-            hours_left = time_diff.total_seconds() / 3600
 
             # "Today/Now" Notification (approx 0 to 12 hours before)
             if 0 < hours_left <= 12:
                 notification_type = "today"
                 title = "CPT Heute!"
+                logger.debug(f"CPT {cpt_id}: Triggering 'today' notification (hours_left={hours_left:.1f})")
             
-            # "Upcoming" Notification (approx 12 to 73 hours before)
-            # We check if we already sent the '3day' (upcoming) notification.
-            # If not, we send it now, regardless of whether it is exactly 72h or just 24h before.
-            elif 12 < hours_left <= 73:
-                notification_type = "3day" 
-                # Calculate simple days difference for display
-                if days_diff == 0:
-                     title = "CPT Morgen!"
+            # "Upcoming" Notification (more than 12 hours before)
+            # For 3-day notification, we check based on days_diff (ignoring time)
+            # This means: if days_diff >= 1, we send the notification
+            elif hours_left > 12:
+                notification_type = "3day"
+                # Use days_diff for the title calculation
+                if days_diff == 1:
+                    title = "CPT Morgen!"
                 else:
-                     title = f"CPT in {days_diff} Tagen!"
+                    title = f"CPT in {days_diff} Tagen!"
+                logger.debug(f"CPT {cpt_id}: Triggering '3day' notification (days_diff={days_diff}, hours_left={hours_left:.1f})")
 
             if notification_type:
                 # Key for persistence: "ID_TYPE" e.g. "139_3day"
@@ -105,8 +125,19 @@ class CPTChecker(commands.Cog):
                 
                 # Check if already announced
                 if key not in self.cpts_announced:
+                    logger.info(f"Sending notification for CPT {cpt_id} ({notification_type}): {title}")
                     if await self.send_notification(cpt, title):
-                         self.cpts_announced[key] = cpt_date_str
+                        self.cpts_announced[key] = cpt_date_str
+                        notified_count += 1
+                        logger.info(f"Successfully sent notification for CPT {cpt_id}")
+                    else:
+                        logger.error(f"Failed to send notification for CPT {cpt_id}")
+                else:
+                    logger.debug(f"CPT {cpt_id} already announced as {notification_type}, skipping")
+            else:
+                logger.debug(f"CPT {cpt_id}: No notification needed (hours_left={hours_left:.1f})")
+        
+        logger.info(f"Processed {processed_count} CPTs in FIR, sent {notified_count} notifications")
 
     def load_announced_cpts(self):
         try:
@@ -131,15 +162,17 @@ class CPTChecker(commands.Cog):
                         # Let's just import them as keys.
                         self.cpts_announced = {k: None for k in data}
                     elif isinstance(data, dict):
-                         self.cpts_announced = data
+                        self.cpts_announced = data
+                        logger.info(f"Loaded {len(self.cpts_announced)} previously announced CPTs")
                     else:
                         logger.warning("cpts.json format unrecognized. Starting with empty record.")
                         self.cpts_announced = {}
             else:
+                logger.info("No existing cpts.json found, starting fresh")
                 self.cpts_announced = {}
 
         except Exception as e:
-            logger.error(f"Failed to load announced CPTs: {e}")
+            logger.error(f"Failed to load announced CPTs: {e}", exc_info=True)
             self.cpts_announced = {}
 
     def save_announced_cpts(self):
@@ -147,9 +180,10 @@ class CPTChecker(commands.Cog):
             import json
             os.makedirs("data", exist_ok=True)
             with open("data/cpts.json", "w") as f:
-                json.dump(self.cpts_announced, f)
+                json.dump(self.cpts_announced, f, indent=2)
+            logger.debug(f"Saved {len(self.cpts_announced)} announced CPTs to disk")
         except Exception as e:
-            logger.error(f"Failed to save announced CPTs: {e}")
+            logger.error(f"Failed to save announced CPTs: {e}", exc_info=True)
 
     def cleanup_old_cpts(self):
         """Removes CPTs that have already passed from the announced list."""
@@ -157,11 +191,14 @@ class CPTChecker(commands.Cog):
             now = datetime.now(timezone.utc)
             keys_to_remove = []
             
+            logger.debug(f"Running cleanup of old CPTs (total tracked: {len(self.cpts_announced)})")
+            
             for key, date_str in self.cpts_announced.items():
                 if date_str is None:
                     # Legacy data without date.
                     # Optional: Remove if we want to enforce cleanup, or keep until manual purge.
                     # Let's keep them to avoid re-announcing if the bot restarts quickly after migration.
+                    logger.debug(f"Keeping legacy entry without date: {key}")
                     continue
                 
                 try:
@@ -169,8 +206,10 @@ class CPTChecker(commands.Cog):
                     # If event is in the past (plus a buffer, e.g., 1 day), remove it
                     if event_date + timedelta(days=1) < now:
                         keys_to_remove.append(key)
+                        logger.debug(f"Marking {key} for removal (event date: {event_date.isoformat()})")
                 except ValueError:
                     # Invalid date format, remove to be safe
+                    logger.warning(f"Invalid date format for {key}: {date_str}, removing")
                     keys_to_remove.append(key)
             
             if keys_to_remove:
@@ -178,9 +217,11 @@ class CPTChecker(commands.Cog):
                 for k in keys_to_remove:
                     del self.cpts_announced[k]
                 self.save_announced_cpts()
+            else:
+                logger.debug("No old CPT entries to clean up")
                 
         except Exception as e:
-            logger.error(f"Error during CPT cleanup: {e}")
+            logger.error(f"Error during CPT cleanup: {e}", exc_info=True)
 
     @commands.hybrid_command(name="testcpt", description="Manually triggers the CPT check.")
     async def test_cpt_manual(self, ctx):
@@ -188,7 +229,7 @@ class CPTChecker(commands.Cog):
         # Defer response since it might take a while
         await ctx.defer()
         
-        logger.info("Manual CPT check triggered by user.")
+        logger.info(f"Manual CPT check triggered by user {ctx.author}")
         try:
             cpts = await self.fetch_cpts()
 
@@ -198,40 +239,45 @@ class CPTChecker(commands.Cog):
             
             if count_after > count_before:
                 self.save_announced_cpts()
-                await ctx.send(f"Fertig. {count_after - count_before} neue Benachrichtigungen gesendet.")
+                msg = f"Fertig. {count_after - count_before} neue Benachrichtigungen gesendet."
+                logger.info(msg)
+                await ctx.send(msg)
             else:
-                 msg = "Fertig. Keine neues CPTs gefunden."
-                 await ctx.send(msg)
+                msg = "Fertig. Keine neues CPTs gefunden."
+                logger.info(msg)
+                await ctx.send(msg)
 
         except Exception as e:
-            logger.error(f"Error in manual CPT check: {e}")
+            logger.error(f"Error in manual CPT check: {e}", exc_info=True)
             await ctx.send(f"Fehler aufgetreten: {e}")
 
     async def send_notification(self, cpt, title_prefix):
         channel = self.bot.get_channel(CPT_CHANNEL_ID)
         if not channel:
-            logger.warning(f"Channel {CPT_CHANNEL_ID} not found.")
-            return
+            logger.error(f"Channel {CPT_CHANNEL_ID} not found.")
+            return False
 
-        embed = discord.Embed(
-            title=f"{title_prefix}: {cpt.get('course_name')}",
-            description=f"Ein neues CPT steht an!",
-            color=discord.Color.blue(),
-            timestamp=datetime.fromisoformat(cpt.get('date')).replace(tzinfo=None)
-        )
-        embed.add_field(name="Trainee", value=f"{cpt.get('trainee_name')} ({cpt.get('trainee_vatsim_id')})", inline=True)
-        embed.add_field(name="Position", value=cpt.get('position'), inline=True)
-        embed.add_field(name="Mentor", value=f"{cpt.get('local_name')}", inline=True)
-        
-        message = ""
-        role_id = CPT_ROLE_ID
-        if role_id:
-            message = f"<@&{role_id}> "
         try:
+            embed = discord.Embed(
+                title=f"{title_prefix}: {cpt.get('course_name')}",
+                description=f"Ein neues CPT steht an!",
+                color=discord.Color.blue(),
+                timestamp=datetime.fromisoformat(cpt.get('date')).replace(tzinfo=None)
+            )
+            embed.add_field(name="Trainee", value=f"{cpt.get('trainee_name')} ({cpt.get('trainee_vatsim_id')})", inline=True)
+            embed.add_field(name="Position", value=cpt.get('position'), inline=True)
+            embed.add_field(name="Mentor", value=f"{cpt.get('local_name')}", inline=True)
+            
+            message = ""
+            role_id = CPT_ROLE_ID
+            if role_id:
+                message = f"<@&{role_id}> "
+            
             await channel.send(content=message, embed=embed)
+            logger.info(f"Sent notification to channel {CPT_CHANNEL_ID}: {title_prefix}")
             return True
         except Exception as e:
-            logger.error(f"Failed to send notification: {e}")
+            logger.error(f"Failed to send notification: {e}", exc_info=True)
             return False
 
     @cpt_check_loop.before_loop
